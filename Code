@@ -1,0 +1,713 @@
+TOP MODULE - JUST COPY AND PASTE FROM WEHRE IT SAYS MODULE aUTOROVER....
+
+~~~~~~~~~~~~~~~~~~~~~~
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/16/2019 05:35:46 PM
+// Design Name: 
+// Module Name: AutoRoverTopModule
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module AutoRoverTopModule(
+    input clk, rst,
+    input [1:0] MMvalues, // Moisture meter values
+    input [2:0] IPS,  
+    input SensorA,        // SEN pins on the HBridge
+    input SensorB,        // SEN pins on the HBridge
+    input IR,
+    output [3:0] HBridgeIN,
+    output [1:0] HBridgeEN,
+    output [6:0] seg,
+    output [3:0] an,
+    output [3:0] Servo
+    );
+    
+    
+    // Databus of all the PWM's done signals
+    wire [5:0] PeriodFinished;
+    // Done signal of the active servo PWM
+    wire ActivePeriodFinished;
+    
+    wire IRModuleDone;
+    wire EnableIRModule;
+    wire ResetIRModule;
+    
+    // Duty cycles for the HBridge EN pins
+    wire [11:0] DutyA, DutyB;
+    // Duty cycle of the active servo PWM
+    wire [20:0] ActiveServoDuty;
+    
+    // All of the duty cycles for the four servos in one flattened databus
+    wire [83:0] ServoDuty;
+    
+    // HBridge IN pins
+    wire [3:0] Direction;
+    
+    // Select bit into ServoMUX
+    wire [1:0] ServoNum;
+    assign HBridgeIN = Direction;
+
+//       assign led = sw;
+//       assign ServoDuty = (sw[2:0] == 3'b001) ? 20'd200000 :
+//                          (sw[2:0] == 3'b010) ? 20'd150000 :
+//                          (sw[2:0] == 3'b100) ? 20'd100000 : 20'd100000;
+
+// PWMS
+
+    // HBridge EN PWMs
+    // LEFT
+    PWM #(12,4000) u0 (
+        .clock(clk),
+        .duty(DutyA),
+        .reset(rst),
+        .PWM(HBridgeEN[0]),
+        .done(PeriodFinished[0])
+    );
+    
+    // RIGHT
+    PWM #(12,4000) u1 (
+        .clock(clk),
+        .duty(DutyB),
+        .reset(rst),
+        .PWM(HBridgeEN[1]),
+        .done(PeriodFinished[1])
+    );
+
+    // Servo PWMs
+    // ARM    
+    PWM #(21,2000000) u2 (
+        .clock(clk),
+        .duty(ServoDuty[20:0]),
+        .reset(rst),
+        .PWM(Servo[0]),
+        .done(PeriodFinished[2])
+    );
+    
+    // LEFT
+    PWM #(21,2000000) u3 (
+        .clock(clk),
+        .duty(ServoDuty[41:21]),
+        .reset(rst),
+        .PWM(Servo[1]),
+        .done(PeriodFinished[3])
+    );
+    
+    // MIDDLE
+    PWM #(21,2000000) u4 (
+        .clock(clk),
+        .duty(ServoDuty[62:42]),
+        .reset(rst),
+        .PWM(Servo[2]),
+        .done(PeriodFinished[4])
+    
+    );
+    
+    // RIGHT
+    PWM #(21,2000000) u5 (
+        .clock(clk),
+        .duty(ServoDuty[83:63]),
+        .reset(rst),
+        .PWM(Servo[3]),
+        .done(PeriodFinished[5])
+    );    
+
+    SevenSegment u6 (
+        .clock(clk),
+        .SensorA(SensorA),
+        .SensorB(SensorB),
+        .DirectionS(Direction),
+        .an(an),
+        .seg(seg)
+    );
+    
+    IPSMovement u7 (
+        .Clock(clk),
+        .Reset(rst),
+        .IPS(IPS),
+        .Direction(Direction),
+        .DutyA(DutyA),
+        .DutyB(DutyB),
+        .IR(IR),
+        .EnableIRModule(EnableIRModule),
+        .IRModuleDone(IRModuleDone),
+        .ResetIRModule(ResetIRModule)
+    );
+    
+    IRsensor u8 (
+      .MMvalues(MMvalues),
+      .Clock(clk),
+      .Reset(ResetIRModule),
+      .ServoNum(ServoNum),
+      .ActivePeriodFinished(ActivePeriodFinished),
+      .ActiveServoDuty(ActiveServoDuty),
+      .EnableIRModule(EnableIRModule),
+      .IRModuleDone(IRModuleDone)
+    );
+      
+      ServoMUX u9 (
+      .ServoDuty(ServoDuty),
+      .PeriodFinished(PeriodFinished[5:2]),
+      .ActivePeriodFinished(ActivePeriodFinished),
+      .ServoNum(ServoNum)
+    );
+    
+endmodule
+
+
+
+
+`~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PWM CODE
+
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/16/2019 05:36:31 PM
+// Design Name: 
+// Module Name: PWM
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module PWM #(parameter SIZE=12, PERIOD=4000)(
+
+    input [SIZE-1:0] duty,
+    input clock,
+    input reset,
+    output reg PWM,
+    output done // Activates when the period is finished
+    );
+    
+   reg [SIZE-1:0] counter; 
+    assign done = (counter == PERIOD) ? 1 : 0;
+    
+    initial begin
+        counter = 0;
+    end
+    
+    always@(posedge clock) begin
+        if (counter >= PERIOD)
+           counter = 0;
+        else
+        
+        begin
+            counter=counter+1;
+            PWM = (counter < duty)? 1:0;
+        end
+                     
+        end
+endmodule
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+SEVENSEGMENT
+
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/16/2019 06:35:10 PM
+// Design Name: 
+// Module Name: SevenSegment
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module SevenSegment(
+
+    input clock,
+    input SensorA, SensorB,
+    input [3:0] DirectionS,
+    output [6:0] seg,
+    output [3:0] an
+    
+    );
+    
+    wire [6:0] Dig0Seg, Dig1Seg, Dig2Seg, Dig3Seg;
+    reg [18:0] count;
+    
+    initial count = 0;
+    
+    always @ (posedge clock)
+        count = count + 1;
+    
+    assign Dig0Seg = (DirectionS == 4'b1001) ? 7'b0000011 :
+                     (DirectionS == 4'b0110) ? 7'b0001110 : 7'b1111111;
+                     
+    assign {Dig3Seg,Dig2Seg,Dig1Seg} = (SensorA || SensorB) ? {7'b0010001, 7'b0000110, 7'b0010010}:
+                                                              {7'b0101011, 7'b0100011, 7'b1111111};
+    
+   // assign (duty_from_sw) = (SensorA || SensorB) ? sw[5:4] == 2'b00) ? 12'd0;     //stop when over 1A                                                     
+                                                            
+                                           //  {7'b0101011, 7'b0100011, 7'b1111111};
+                                           //  {7'b0010001, 7'b0000110, 7'b0010010} :
+                                                              
+                                                              
+    assign {seg,an} = (count[18:17] == 2'b00) ? {Dig0Seg, 4'b1110} :
+                      (count[18:17] == 2'b01) ? {Dig1Seg, 4'b1101} :
+                      (count[18:17] == 2'b10) ? {Dig2Seg, 4'b1011} :
+                      (count[18:17] == 2'b11) ? {Dig3Seg, 4'b0111} : {7'b1111111,4'b1110};
+    
+endmodule
+
+
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+IPS CODE
+
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/16/2019 05:37:14 PM
+// Design Name: 
+// Module Name: IPSMovement
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module IPSMovement(
+    input Clock,
+    input Reset,
+    input [2:0]IPS,
+    input IR,
+    input IRModuleDone,
+    output reg [3:0] Direction,
+    output [11:0] DutyA, DutyB,
+    output reg EnableIRModule,
+    output reg ResetIRModule
+    );
+
+    reg [23:0] ENPins;
+    reg [1:0] state; // 0 means line following (with IR), 1 means line following (ignore IR until it hits 0), 2 means move servos
+    localparam LINE_FOLLOW_IR = 0, LINE_FOLLOW_NO_IR = 1, MOVE_SERVOS = 2;
+    initial 
+        begin
+            ENPins <=0;
+            EnableIRModule<=0;
+            Direction <=0;
+            state<=0;
+        end
+        
+    assign {DutyA, DutyB} = ENPins;
+    
+    always @ (posedge Clock)
+        case (state)
+        LINE_FOLLOW_IR, LINE_FOLLOW_NO_IR:
+        begin
+        ResetIRModule<=0;
+        if (state == LINE_FOLLOW_IR && IR)
+            state <= MOVE_SERVOS;
+        else if (state == LINE_FOLLOW_NO_IR && !IR)
+            state <= LINE_FOLLOW_IR;
+        casex (IPS) 
+            3'b111:     //all sensors detected, stop 
+                begin
+                    Direction <= 4'b0110;
+                    ENPins <= {12'd0, 12'd0};
+                end
+            3'b010 :  //middle IPS detected, go straight
+                begin
+                    Direction <= 4'b0110;
+                    ENPins <= {12'd4000, 12'd4000};
+                end
+            3'b1x0: //LEFt or left and middle IPS detected, pivot left
+                begin
+                    Direction <= 4'b0101;
+                    ENPins <= {12'd3000, 12'd3000};
+                end
+            3'b0x1 : //Right or Right and middle IPS detected, pivot right
+                begin
+                    Direction <= 4'b1010;
+                    ENPins <= {12'd3000, 12'd3000};    
+                end
+                
+            default:
+                begin
+                    Direction <= 4'b1001; //Backwards direction to get back on track
+                    ENPins <= {12'd4000,12'd4000};
+                end
+        endcase
+        end
+        
+        
+        MOVE_SERVOS: // State 2 for moving servos
+        begin
+            Direction <= 4'b0;
+            ENPins <= {12'd0,12'd0};
+            // Set enable of IR sensor module
+            EnableIRModule <= 1;
+            if (IRModuleDone)
+            begin
+                EnableIRModule <= 0;
+                ResetIRModule <= 1;
+                state <= LINE_FOLLOW_NO_IR;
+            end
+        end
+        default: state<=LINE_FOLLOW_IR;
+        endcase
+           
+
+endmodule
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/26/2019 01:22:22 PM
+// Design Name: 
+// Module Name: IRsensor
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module IRsensor(
+    input [1:0] MMvalues,
+    input Clock,
+    input EnableIRModule,        
+    input Reset,  
+    input ActivePeriodFinished,
+    output reg [1:0] ServoNum, // Which servo should be moving?
+    output reg [20:0] ActiveServoDuty,
+    output reg IRModuleDone // Finished moving all the servos to check the moisture, etc
+    );
+    
+    localparam LEFT=100_000, MIDDLE=150_000, RIGHT=200_000;
+    localparam MOVE_ARM = 0, WAIT = 1, RESET_ARM = 2, WAIT_FROM_RESET = 3;      
+    reg [6:0] counter;
+    reg [1:0] state; 
+    reg flag;
+    reg [1:0] MMvalues_sync;
+    
+    wire [1:0] which_servo;
+    assign which_servo = (MMvalues_sync == 2'b00) ? 1 :  //assiging moisture outputs to a specific servo
+                         (MMvalues_sync == 2'b01) ? 2 :
+                         (MMvalues_sync == 2'b11) ? 3 : 0;
+    initial 
+      {counter, state, flag, 
+       IRModuleDone, ActiveServoDuty, 
+       ServoNum, MMvalues_sync} = 0;
+        
+        
+     always @ (posedge Clock)
+        MMvalues_sync <= MMvalues;
+        
+     always @(posedge Clock)
+     begin
+     if (Reset)
+       {counter, state, flag, 
+       IRModuleDone, ActiveServoDuty, 
+       ServoNum} = 0;
+     else if (EnableIRModule && ~IRModuleDone) 
+     case (state) // If it's not counting
+      MOVE_ARM:
+        begin
+          ServoNum <=flag ? which_servo:0;    
+          ActiveServoDuty <= RIGHT;
+          state <= WAIT;
+         end
+       
+      WAIT:
+        begin
+           if (ActivePeriodFinished)
+            if (counter < 80) 
+                counter <= counter + 1;
+            else
+            begin
+                counter <= 0;
+                // Move the state back to initial state if we're done
+                // Otherwise, move the arm back up
+                state<=RESET_ARM;
+                IRModuleDone<=flag ? 1:0;
+            end
+         end
+      
+      RESET_ARM:
+        begin
+          ServoNum <= 0;    
+          ActiveServoDuty <= LEFT;
+          flag<=1;
+          state <= WAIT_FROM_RESET;
+         end
+         
+      WAIT_FROM_RESET:
+        begin
+           if (ActivePeriodFinished)
+            if (counter < 80) 
+                counter <= counter + 1;
+            else
+            begin
+                counter <= 0;
+                // Move the state back to initial state if we're done
+                // Otherwise, move the arm back up
+                state<=MOVE_ARM;
+                IRModuleDone<=0;
+            end
+         end
+
+      endcase
+    end
+endmodule
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+irSENSOR
+
+
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 11/18/2019 01:18:47 PM
+// Design Name: 
+// Module Name: ServoMUX
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module ServoMUX(
+
+//    input done0,
+//    input done1,
+//    input done2,
+//    input done3,
+    input [3:0] PeriodFinished,
+    input [1:0] ServoNum,
+    output ActivePeriodFinished,
+    output [83:0] ServoDuty
+
+    );
+    
+    assign ActivePeriodFinished = PeriodFinished[ServoNum];
+    
+//    assign PeriodFinished =
+//        (ServoNum == 2'd0) ? done0:
+//        (ServoNum == 2'd1) ? done1:
+//        (ServoNum == 2'd2) ? done2:
+//        (ServoNum == 2'd3) ? done3:0;
+        
+    assign ServoDuty = {21'd0, 21'd0, 21'd0, 21'd2000000}
+            << 21 * ServoNum;
+            
+endmodule
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+constraints
+
+
+
+
+
+# Clock signal
+set_property PACKAGE_PIN W5 [get_ports clk]
+	set_property IOSTANDARD LVCMOS33 [get_ports clk]
+	create_clock -add -name sys_clk_pin -period 10.00 -waveform {0 5} [get_ports clk]
+
+# Switches
+#set_property PACKAGE_PIN V17 [get_ports {sw[0]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {sw[0]}]
+#set_property PACKAGE_PIN V16 [get_ports {sw[1]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {sw[1]}]
+#set_property PACKAGE_PIN W16 [get_ports {sw[2]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {sw[2]}]
+##set_property PACKAGE_PIN W17 [get_ports {sw[3]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {sw[3]}]
+#set_property PACKAGE_PIN W15 [get_ports {sw[4]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {sw[4]}]
+#set_property PACKAGE_PIN V15 [get_ports {sw[5]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {sw[5]}]
+
+# LEDs
+#set_property PACKAGE_PIN U16 [get_ports {led[0]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {led[0]}]
+#set_property PACKAGE_PIN E19 [get_ports {led[1]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {led[1]}]
+#set_property PACKAGE_PIN U19 [get_ports {led[2]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {led[2]}]
+#set_property PACKAGE_PIN V19 [get_ports {led[3]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {led[3]}]
+#set_property PACKAGE_PIN W18 [get_ports {led[4]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {led[4]}]
+#set_property PACKAGE_PIN U15 [get_ports {led[5]}]
+#	set_property IOSTANDARD LVCMOS33 [get_ports {led[5]}]
+
+#Buttons
+set_property PACKAGE_PIN U18 [get_ports rst]
+	set_property IOSTANDARD LVCMOS33 [get_ports rst]
+	
+# Pmod Header JA
+#Sch name = JA9
+set_property PACKAGE_PIN H2 [get_ports {HBridgeIN[0]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {HBridgeIN[0]}]
+#Sch name = JA2
+set_property PACKAGE_PIN L2 [get_ports {HBridgeIN[1]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {HBridgeIN[1]}]
+#Sch name = JA3
+set_property PACKAGE_PIN J2 [get_ports {HBridgeIN[2]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {HBridgeIN[2]}]
+#Sch name = JA8
+set_property PACKAGE_PIN K2 [get_ports {HBridgeIN[3]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {HBridgeIN[3]}]
+
+#Sch name = JA1
+set_property PACKAGE_PIN J1 [get_ports {HBridgeEN[0]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {HBridgeEN[0]}]
+#Sch name = JA7
+set_property PACKAGE_PIN H1 [get_ports {HBridgeEN[1]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {HBridgeEN[1]}]
+
+#7 segment display
+set_property PACKAGE_PIN W7 [get_ports {seg[0]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {seg[0]}]
+set_property PACKAGE_PIN W6 [get_ports {seg[1]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {seg[1]}]
+set_property PACKAGE_PIN U8 [get_ports {seg[2]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {seg[2]}]
+set_property PACKAGE_PIN V8 [get_ports {seg[3]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {seg[3]}]
+set_property PACKAGE_PIN U5 [get_ports {seg[4]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {seg[4]}]
+set_property PACKAGE_PIN V5 [get_ports {seg[5]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {seg[5]}]
+set_property PACKAGE_PIN U7 [get_ports {seg[6]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {seg[6]}]
+
+
+set_property PACKAGE_PIN U2 [get_ports {an[0]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {an[0]}]
+set_property PACKAGE_PIN U4 [get_ports {an[1]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {an[1]}]
+set_property PACKAGE_PIN V4 [get_ports {an[2]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {an[2]}]
+set_property PACKAGE_PIN W4 [get_ports {an[3]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {an[3]}]
+
+	##Pmod Header JB
+#Sch name = JB1
+set_property PACKAGE_PIN A14 [get_ports SensorA]
+	set_property IOSTANDARD LVCMOS33 [get_ports SensorA]
+#Sch name = JB2
+set_property PACKAGE_PIN A16 [get_ports SensorB]
+	set_property IOSTANDARD LVCMOS33 [get_ports SensorB]
+##Sch name = JB8
+set_property PACKAGE_PIN A17 [get_ports {IPS[0]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {IPS[0]}]
+##Sch name = JB9
+set_property PACKAGE_PIN C15 [get_ports {IPS[1]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {IPS[1]}]
+#Sch name = JB10
+set_property PACKAGE_PIN C16 [get_ports {IPS[2]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {IPS[2]}]
+
+	
+	#Pmod Header JC
+#Sch name = JC1
+set_property PACKAGE_PIN K17 [get_ports {Servo[0]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {Servo[0]}]
+#Sch name = JC2
+set_property PACKAGE_PIN M18 [get_ports {Servo[1]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {Servo[1]}]
+#Sch name = JC3
+set_property PACKAGE_PIN N17 [get_ports {Servo[2]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {Servo[2]}]
+#Sch name = JC4
+set_property PACKAGE_PIN P18 [get_ports {Servo[3]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {Servo[3]}]
+#Sch name = JC7
+set_property PACKAGE_PIN L17 [get_ports {IR}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {IR}]
+#Sch name = JC8
+set_property PACKAGE_PIN M19 [get_ports {MMvalues[0]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {MMvalues[0]}]
+#Sch name = JC9
+set_property PACKAGE_PIN P17 [get_ports {MMvalues[1]}]
+	set_property IOSTANDARD LVCMOS33 [get_ports {MMvalues[1]}]
+
+
+
